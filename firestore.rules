@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    /* -------------------------
+       Helper functions
+       ------------------------- */
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    /* -------------------------
+       Polls collection
+       ------------------------- */
+    
+    match /polls/{pollId} {
+      // Anyone authenticated can read polls
+      allow read: if isSignedIn();
+      
+      // Any authenticated user can create a poll
+      allow create: if isSignedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.question is string
+        && request.resource.data.options is list
+        && request.resource.data.options.size() >= 2
+        && request.resource.data.options.size() <= 6;
+      
+      // Only poll owner can update their poll
+      allow update: if isSignedIn()
+        && resource.data.createdBy == request.auth.uid;
+      
+      // Only poll owner can delete their poll
+      allow delete: if isSignedIn()
+        && resource.data.createdBy == request.auth.uid;
+      
+      /* -------------------------
+         Votes subcollection
+         ------------------------- */
+      
+      match /votes/{userId} {
+        // Anyone authenticated can read votes (for live results)
+        allow read: if isSignedIn();
+        
+        // User can vote only once and only for themselves
+        // Also check that poll is still active
+        allow create: if isSignedIn()
+          && request.auth.uid == userId
+          && !exists(/databases/$(database)/documents/polls/$(pollId)/votes/$(userId))
+          && get(/databases/$(database)/documents/polls/$(pollId)).data.isActive == true;
+        
+        // Votes cannot be updated
+        allow update: if false;
+        
+        // Only poll owner can delete votes (for reset functionality)
+        allow delete: if isSignedIn()
+          && get(/databases/$(database)/documents/polls/$(pollId)).data.createdBy == request.auth.uid;
+      }
+    }
+    
+    /* -------------------------
+       Users collection
+       ------------------------- */
+    
+    match /users/{userId} {
+      // Users can read and write their own profile
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+    
+    /* -------------------------
+       Vote History collection
+       ------------------------- */
+    
+    match /voteHistory/{userId} {
+      // Users can manage their own vote history
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+      
+      match /polls/{pollId} {
+        // Users can manage their own vote history entries
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+  }
+}
